@@ -8,7 +8,7 @@ on:
       platforms:
         description: Which platforms to build
         type: choice
-        options: [all, android, ios]
+        options: [all, android, ios, macos]
         default: all
   push:
     branches: [main]
@@ -35,13 +35,30 @@ jobs:
     outputs:
       v8_version: ${{ steps.cfg.outputs.v8_version }}
       ndk_release: ${{ steps.cfg.outputs.ndk_release }}
+      apple_variants: ${{ steps.cfg.outputs.apple_variants }}
     steps:
       - uses: actions/checkout@v7
       - id: cfg
+        env:
+          # Anything other than a manual dispatch builds the whole matrix.
+          PLATFORMS: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || 'all' }}
         run: |
           set -a; . ./config.env; set +a
           echo "v8_version=$V8_VERSION"      >> "$GITHUB_OUTPUT"
           echo "ndk_release=$ANDROID_NDK_RELEASE" >> "$GITHUB_OUTPUT"
+
+          # iOS and macOS share a job (same runner, same checkout, same script)
+          # but are separately selectable, so the variant list is built here
+          # rather than filtered inside the job.
+          ios='"arm64-device","arm64-simulator","x64-simulator","arm64-catalyst","x64-catalyst"'
+          macos='"arm64-macos","x64-macos"'
+          case "$PLATFORMS" in
+            ios)     variants="[$ios]" ;;
+            macos)   variants="[$macos]" ;;
+            android) variants="[]" ;;
+            *)       variants="[$ios,$macos]" ;;
+          esac
+          echo "apple_variants=$variants" >> "$GITHUB_OUTPUT"
 
   android:
     needs: config
@@ -114,15 +131,17 @@ jobs:
           path: v8-*-src-headers.tar.gz
           retention-days: 7
 
-  ios:
+  # Named for the platform family rather than "ios": it builds the catalyst and
+  # macOS variants too, which are not iOS targets.
+  apple:
     needs: config
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platforms == 'all' || inputs.platforms == 'ios' }}
+    if: ${{ needs.config.outputs.apple_variants != '[]' }}
     runs-on: macos-15
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        variant: [arm64-device, arm64-simulator, x64-simulator, arm64-catalyst, x64-catalyst, arm64-macos, x64-macos]
+        variant: ${{ fromJSON(needs.config.outputs.apple_variants) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -154,7 +173,7 @@ jobs:
           retention-days: 7
 
   release:
-    needs: [config, android, ios]
+    needs: [config, android, apple]
     if: startsWith(github.ref, 'refs/tags/v8-')
     runs-on: ubuntu-24.04
     steps:

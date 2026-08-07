@@ -37,10 +37,17 @@ from a pinned revision, with the gn args under review, is the point of this repo
 
 ## Matrix
 
-| Platform | Targets | Runner |
-|---|---|---|
-| Android | `arm64-v8a`, `x86_64`, `armeabi-v7a`, `x86` | `ubuntu-24.04` |
-| Apple | `arm64-device`, `arm64-simulator`, `x64-simulator`, `arm64-catalyst`, `x64-catalyst`, `arm64-macos`, `x64-macos` | `macos-15` |
+| Platform | Targets | Runner | `platforms` |
+|---|---|---|---|
+| Android | `arm64-v8a`, `x86_64`, `armeabi-v7a`, `x86` | `ubuntu-24.04` | `android` |
+| iOS | `arm64-device`, `arm64-simulator`, `x64-simulator`, `arm64-catalyst`, `x64-catalyst` | `macos-15` | `ios` |
+| macOS | `arm64-macos`, `x64-macos` | `macos-15` | `macos` |
+
+iOS and macOS share one job — same runner, same checkout, same script — but are
+separately selectable. Dispatching with `platforms: macos` builds the two macOS
+variants and nothing else; `all` (the default, and what every non-dispatch event
+uses) builds all eleven targets. The variant list is computed in the `config`
+job, so an unselected family produces no jobs at all rather than jobs that skip.
 
 Each target is its own job with its own checkout. That costs one `gclient sync`
 per job, but the sync is about 6 minutes against 90–145 minutes of compile, so
@@ -131,14 +138,15 @@ scripts/matrix/build-android.sh --abi arm64-v8a --ndk-root "$ANDROID_HOME/ndk/<v
 
 scripts/matrix/fetch.sh --platform ios
 scripts/matrix/build-ios.sh --variant arm64-device
+scripts/matrix/build-ios.sh --variant arm64-macos   # same checkout as iOS
 ```
 
 Sources land in `.v8/`, output in `dist/<platform>-<target>/`. The two platforms
 need different DEPS, so use separate `--v8-dir` checkouts to keep both without
 re-syncing.
 
-To iterate on one platform in CI without rebuilding the other (~2.5 hours per
-platform), dispatch the workflow with `platforms: android` or `platforms: ios`.
+To iterate on one platform in CI without rebuilding the others (~2.5 hours per
+platform), dispatch the workflow with `platforms: android`, `ios` or `macos`.
 
 ## Patches
 
