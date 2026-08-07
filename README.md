@@ -40,7 +40,7 @@ from a pinned revision, with the gn args under review, is the point of this repo
 | Platform | Targets | Runner |
 |---|---|---|
 | Android | `arm64-v8a`, `x86_64`, `armeabi-v7a`, `x86` | `ubuntu-24.04` |
-| Apple | `arm64-device`, `arm64-simulator`, `x64-simulator`, `arm64-catalyst`, `x64-catalyst` | `macos-15` |
+| Apple | `arm64-device`, `arm64-simulator`, `x64-simulator`, `arm64-catalyst`, `x64-catalyst`, `arm64-macos`, `x64-macos` | `macos-15` |
 
 Each target is its own job with its own checkout. That costs one `gclient sync`
 per job, but the sync is about 6 minutes against 90–145 minutes of compile, so
@@ -49,6 +49,23 @@ sharing it would save almost nothing.
 This replaces the previous arrangement of one branch per architecture. Nine
 branches meant nine places to apply a V8 bump or a patch, and cutting a release
 needs a single ref to tag.
+
+### macOS is a target_os, not a target_environment
+
+The iOS variants select an environment (`device`, `simulator`, `catalyst`) under
+`target_os="ios"`. macOS is `target_os="mac"` with no environment at all —
+passing `target_environment` there is an error rather than a no-op — so the
+macOS variants set it empty and the script omits the arg.
+
+Like catalyst, macOS permits JIT and so is deliberately **not** lite mode. It
+does keep the rest of the shared arg set, `cppgc_enable_caged_heap=false`
+included: a release ships one `include/` for every slice, and that flag changes
+`Member<T>`'s size, so a slice built with the cage would be an ABI mismatch
+against the headers every other slice shares.
+
+Assets are named `macos-<cpu>` rather than `ios-<variant>`; `build-ios.sh`
+emits the resolved slice name as a step output so the workflow does not have to
+recompute it.
 
 ### visionOS needs no build of its own
 

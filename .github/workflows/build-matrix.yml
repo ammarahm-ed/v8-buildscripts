@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [arm64-device, arm64-simulator, x64-simulator, arm64-catalyst, x64-catalyst]
+        variant: [arm64-device, arm64-simulator, x64-simulator, arm64-catalyst, x64-catalyst, arm64-macos, x64-macos]
     steps:
       - uses: actions/checkout@v7
 
@@ -134,18 +134,23 @@ jobs:
       - name: Fetch and patch V8
         run: scripts/matrix/fetch.sh --platform ios
 
+      # The build emits `slice`, which is the dist/ directory and the asset
+      # stem. It is not simply "ios-<variant>": the macOS variants produce
+      # macos-<cpu>, since they are target_os="mac" rather than an iOS
+      # target_environment.
       - name: Build ${{ matrix.variant }}
+        id: build
         run: scripts/matrix/build-ios.sh --variant ${{ matrix.variant }}
 
       - name: Package
         run: |
-          tar -czf "v8-${{ needs.config.outputs.v8_version }}-ios-${{ matrix.variant }}.tar.gz" \
-            -C dist "ios-${{ matrix.variant }}"
+          tar -czf "v8-${{ needs.config.outputs.v8_version }}-${{ steps.build.outputs.slice }}.tar.gz" \
+            -C dist "${{ steps.build.outputs.slice }}"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: v8-ios-${{ matrix.variant }}
-          path: v8-*-ios-${{ matrix.variant }}.tar.gz
+          name: v8-${{ steps.build.outputs.slice }}
+          path: v8-*-${{ steps.build.outputs.slice }}.tar.gz
           retention-days: 7
 
   release:

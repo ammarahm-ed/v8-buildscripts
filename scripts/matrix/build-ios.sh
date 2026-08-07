@@ -1,12 +1,18 @@
 #!/bin/bash
 set -e
 #
-# Builds the V8 static libraries for one Apple variant into dist/ios-<variant>/.
+# Builds the V8 static libraries for one Apple variant into dist/<slice>/.
 #
 # Usage: build-ios.sh --variant <variant> [--v8-dir <path>] [-- <ninja args>]
 #
 # Variants: arm64-device, arm64-simulator, x64-simulator,
-#           arm64-catalyst, x64-catalyst
+#           arm64-catalyst, x64-catalyst, arm64-macos, x64-macos
+#
+# visionOS has no variant of its own: V8's target_platform accepts only
+# iphoneos/tvos, and it needs none. The platform tag on a member of a *static*
+# archive is advisory -- only the final linked image carries LC_BUILD_VERSION --
+# so a visionOS binary links the iOS archives directly. Consumers map
+# arm64-device onto xros and arm64-simulator onto xrsimulator.
 #
 # Unlike Android, V8 has no monolith target here -- the iOS runtime links a set
 # of per-module archives, so each is rebuilt from its objects. ninja emits thin
@@ -26,7 +32,7 @@ usage() {
 Usage: $(basename "$0") --variant <variant> [--v8-dir <path>] [-- <ninja args>]
 
   --variant   arm64-device | arm64-simulator | x64-simulator
-              | arm64-catalyst | x64-catalyst
+              | arm64-catalyst | x64-catalyst | arm64-macos | x64-macos
 EOF
 }
 
@@ -42,14 +48,26 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# TARGET_ENV is an iOS notion (target_environment); macOS is target_os="mac"
+# with no environment, so it is left empty and keyed off TARGET_OS instead.
+TARGET_OS=ios
 case "$VARIANT" in
     arm64-device)    CPU=arm64; TARGET_ENV=device    ;;
     arm64-simulator) CPU=arm64; TARGET_ENV=simulator ;;
     x64-simulator)   CPU=x64;   TARGET_ENV=simulator ;;
     arm64-catalyst)  CPU=arm64; TARGET_ENV=catalyst  ;;
     x64-catalyst)    CPU=x64;   TARGET_ENV=catalyst  ;;
+    arm64-macos)     CPU=arm64; TARGET_ENV="";       TARGET_OS=mac ;;
+    x64-macos)       CPU=x64;   TARGET_ENV="";       TARGET_OS=mac ;;
     *) echo "Invalid --variant '$VARIANT'" >&2; usage >&2; exit 1 ;;
 esac
+
+# Release slice name, also the dist/ directory and the asset stem.
+if [ "$TARGET_OS" = "mac" ]; then
+    SLICE="macos-$CPU"
+else
+    SLICE="ios-$VARIANT"
+fi
 
 [ "$(uname)" = "Darwin" ] || { echo "Apple variants require a macOS host." >&2; exit 1; }
 
@@ -82,13 +100,12 @@ MODULES=(
 # -- four tries, then Oilpan's fatal OOM handler, before any JS runs. It crashed
 # on an iPad Air while an iPad Pro was fine.
 GN_ARGS="
-    target_os=\"ios\"
+    target_os=\"$TARGET_OS\"
     treat_warnings_as_errors=false
     icu_use_data_file=false
     use_custom_libcxx=false
     is_component_build=false
     is_debug=false
-    ios_enable_code_signing=false
     v8_control_flow_integrity=false
     v8_monolithic=false
     v8_static_library=true
@@ -104,21 +121,34 @@ GN_ARGS="
     symbol_level=0
 "
 
-if [ "$TARGET_ENV" = "catalyst" ]; then
-    # is_official_build here implies ThinLTO, which emits bitcode rather than
-    # object code and cannot be vendored, hence the explicit override.
+if [ "$TARGET_OS" = "mac" ]; then
+    # macOS permits JIT, so like catalyst this is deliberately not lite mode.
+    # is_official_build implies ThinLTO, which emits bitcode rather than object
+    # code and cannot be vendored, hence the explicit override.
     GN_ARGS="$GN_ARGS
         is_official_build=true
         use_thin_lto=false
+        mac_deployment_target=\"$MACOS_DEPLOYMENT_TARGET\""
+elif [ "$TARGET_ENV" = "catalyst" ]; then
+    GN_ARGS="$GN_ARGS
+        is_official_build=true
+        use_thin_lto=false
+        ios_enable_code_signing=false
         ios_deployment_target=\"$CATALYST_DEPLOYMENT_TARGET\""
 else
     GN_ARGS="$GN_ARGS
         v8_enable_lite_mode=true
+        ios_enable_code_signing=false
         ios_deployment_target=\"$IOS_DEPLOYMENT_TARGET\""
 fi
 
+# target_environment is an iOS-only gn arg; passing it for target_os="mac"
+# is an error rather than a no-op.
+TARGET_ENV_ARG=""
+[ -n "$TARGET_ENV" ] && TARGET_ENV_ARG="target_environment=\"$TARGET_ENV\""
+
 OUTFOLDER="out.gn/$VARIANT-release"
-DIST="$ROOT_DIR/dist/ios-$VARIANT"
+DIST="$ROOT_DIR/dist/$SLICE"
 
 cd "$V8_DIR"
 
@@ -146,7 +176,7 @@ archive_lib() {
 }
 
 rm -rf "$OUTFOLDER"
-gn gen "$OUTFOLDER" --args="$GN_ARGS target_environment=\"$TARGET_ENV\" target_cpu=\"$CPU\" v8_target_cpu=\"$CPU\""
+gn gen "$OUTFOLDER" --args="$GN_ARGS $TARGET_ENV_ARG target_cpu=\"$CPU\" v8_target_cpu=\"$CPU\""
 
 echo "Building $VARIANT: $(date)"
 ninja "${NINJA_ARGS[@]}" -C "$OUTFOLDER" "${MODULES[@]}" inspector
@@ -186,3 +216,7 @@ cp "$OUTFOLDER/gen/include/inspector/"*.h "$DIST/include/inspector/"
 
 echo "$V8_VERSION" > "$DIST/V8_VERSION"
 du -sh "$DIST/lib"
+
+# The dist directory and asset stem differ from the variant for macOS, so hand
+# the resolved name back rather than recomputing it in the workflow.
+[ -n "$GITHUB_OUTPUT" ] && echo "slice=$SLICE" >> "$GITHUB_OUTPUT"
