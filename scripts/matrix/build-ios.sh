@@ -125,9 +125,15 @@ if [ "$TARGET_OS" = "mac" ]; then
     # macOS permits JIT, so like catalyst this is deliberately not lite mode.
     # is_official_build implies ThinLTO, which emits bitcode rather than object
     # code and cannot be vendored, hence the explicit override.
+    #
+    # It also defaults chrome_pgo_phase to 2 on desktop targets, which makes gn
+    # exec_script //tools/update_pgo_profiles.py at generation time. That script
+    # is Chromium's and does not exist in a standalone V8 checkout, so gn fails
+    # outright. iOS/catalyst never hit this because PGO is off for iOS targets.
     GN_ARGS="$GN_ARGS
         is_official_build=true
         use_thin_lto=false
+        chrome_pgo_phase=0
         mac_deployment_target=\"$MACOS_DEPLOYMENT_TARGET\""
 elif [ "$TARGET_ENV" = "catalyst" ]; then
     GN_ARGS="$GN_ARGS
