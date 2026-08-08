@@ -110,6 +110,11 @@ GN_ARGS="
     v8_enable_i18n_support=false
     v8_enable_webassembly=true
     v8_enable_sandbox=false
+    # Off deliberately, and not just to match the Apple slices. Pointer
+    # compression brings the sandbox's restrictions on external memory, which
+    # the runtime needs for ArrayBuffer backing stores. It defaults to ON for
+    # 64-bit targets, so leaving it unset is not the same as disabling it.
+    v8_enable_pointer_compression=false
     v8_enable_temporal_support=false
     v8_enable_v8_checks=false
     v8_enable_debugging_features=false
